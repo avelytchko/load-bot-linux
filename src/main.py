@@ -117,6 +117,16 @@ USER_CLEANUP_INTERVAL_HOURS = int(os.getenv("USER_CLEANUP_INTERVAL_HOURS", "24")
 # Allowed LLM providers
 ALLOWED_PROVIDERS = {"grok", "gemini"}
 
+# Shared output-format instruction used as the system message for every LLM provider.
+# Keeps answers plain-text and tight, but lets the model breathe when a question earns it.
+PLAIN_TEXT_INSTRUCTION = (
+    "Provide the entire response exclusively as plain text. Do not use any Markdown formatting "
+    "(no **bold**, *italics*, # headers, or lists). Keep answers tight and to the point — usually "
+    "2-4 sentences — but when a question genuinely needs more (comparisons, exact numbers, "
+    "'explain in detail', 'give exact figures'), go a bit longer and actually be useful. "
+    "Never pad with filler. Match the user's language."
+)
+
 # Initialize database storage
 db_storage = BotStorage()
 
@@ -888,11 +898,24 @@ async def respond_with_llm_message(update):
         if language == "uk":
             user_label = "Користувач"
             assistant_label = "Асистент"
-            instruction = "Відповідай українською мовою як дружній асистент. Не вітайся і не прощайся."
+            instruction = (
+                "Ти — Ботяра, дотепний і кмітливий співрозмовник у чаті. Спілкуйся живою розмовною "
+                "українською, як розумний друг: невимушено, з доречним дорослим гумором, іронією та "
+                "легким сарказмом, але без хамства й без образ. Пиши грамотно, з нормальною пунктуацією. "
+                "Уникай канцеляриту й шаблонних фраз на кшталт 'важливо зазначити' чи 'варто балансувати'. "
+                "На серйозні й чутливі теми (війна, смерть, трагедії) прибирай жарти й відповідай по-дорослому. "
+                "Не вітайся і не прощайся. Можеш мати власну думку й подавати її з характером."
+            )
         else:
             user_label = "User"
             assistant_label = "Assistant"
-            instruction = "Answer in English as a friendly assistant. Don't greet or say goodbye."
+            instruction = (
+                "You are Botyara, a witty and sharp chat companion. Talk like a smart friend: casual, "
+                "with tasteful grown-up humor, irony and light sarcasm, but never rude or insulting. "
+                "Write with proper grammar and punctuation. Avoid corporate filler and hedging clichés. "
+                "On serious or sensitive topics (war, death, tragedies) drop the jokes and answer like an adult. "
+                "Don't greet or say goodbye. Feel free to have and voice your own opinion, with personality."
+            )
 
         if context_messages:
             context_str = "\n".join(
@@ -1000,7 +1023,6 @@ async def respond_with_llm_message(update):
 
 async def call_grok_api(safe_prompt: str, update) -> str:
     """Call Grok API and return response. Raises exception on failure."""
-    plain_text_instruction = "Provide the entire response exclusively as plain text. Do not use any Markdown formatting (no **bold**, *italics*, # headers, or lists). The response must be text only. Provide concise, short answers. Aim for 1-3 sentences."
     max_retries = 2
     retry_delay = 60
 
@@ -1009,11 +1031,11 @@ async def call_grok_api(safe_prompt: str, update) -> str:
             response = await grok_client.chat.completions.create(
                 model=GROK_MODEL,
                 messages=[
-                    {"role": "system", "content": plain_text_instruction},
+                    {"role": "system", "content": PLAIN_TEXT_INSTRUCTION},
                     {"role": "user", "content": safe_prompt},
                 ],
                 max_tokens=1024,
-                temperature=0.7,
+                temperature=0.85,
             )
             return response.choices[0].message.content.strip()
         except Exception as retry_error:  # pylint: disable=broad-exception-caught
@@ -1040,8 +1062,7 @@ async def call_grok_api(safe_prompt: str, update) -> str:
 
 async def call_gemini_api(safe_prompt: str, prompt: str, update) -> str:
     """Call Gemini API and return response. Raises exception on failure."""
-    plain_text_instruction = "Provide the entire response exclusively as plain text. Do not use any Markdown formatting (no **bold**, *italics*, # headers, or lists). The response must be text only. Provide concise, short answers. Aim for 1-3 sentences."
-    model = genai.GenerativeModel(GEMINI_MODEL, system_instruction=plain_text_instruction)
+    model = genai.GenerativeModel(GEMINI_MODEL, system_instruction=PLAIN_TEXT_INSTRUCTION)
     safety_settings = {
         genai.types.HarmCategory.HARM_CATEGORY_HARASSMENT: genai.types.HarmBlockThreshold.BLOCK_NONE,
         genai.types.HarmCategory.HARM_CATEGORY_HATE_SPEECH: genai.types.HarmBlockThreshold.BLOCK_NONE,
@@ -1060,7 +1081,7 @@ async def call_gemini_api(safe_prompt: str, prompt: str, update) -> str:
                 model.generate_content,
                 contents,
                 generation_config=genai.types.GenerationConfig(
-                    temperature=0.7,
+                    temperature=0.85,
                     top_p=0.9,
                     top_k=30,
                     max_output_tokens=1024,
