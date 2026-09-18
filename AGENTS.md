@@ -2,7 +2,7 @@
 
 Telegram bot that downloads videos from TikTok, X/Twitter, Reddit, YouTube Shorts,
 Instagram Reels, etc., and (optionally) answers chat mentions via an LLM and generates
-images. Python 3.12, long-polling, all code lives in `src/`.
+images. Python 3.14, long-polling, all code lives in `src/`.
 
 ## Commands
 
