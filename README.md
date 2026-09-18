@@ -1,6 +1,6 @@
 # Video Downloader Bot
 
-![python-version](https://img.shields.io/badge/python-3.9_|_3.10_|_3.11_|_3.12_|_3.13-blue.svg)
+![python-version](https://img.shields.io/badge/python-3.11_|_3.12_|_3.13_|_3.14-blue.svg)
 [![license](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Linters](https://github.com/ovchynnikov/load-bot-linux/actions/workflows/linets.yml/badge.svg)](https://github.com/ovchynnikov/load-bot-linux/actions/workflows/linets.yml)
