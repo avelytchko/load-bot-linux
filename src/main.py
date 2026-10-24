@@ -25,6 +25,7 @@ from telegram.request import HTTPXRequest
 from logger import error, info, debug
 from general_error_handler import error_handler
 from i18n import get_language
+from polling_health import PollingAwareBot, PollingMonitor, PollingSettings
 from permissions import inform_user_not_allowed, is_user_or_chat_not_allowed
 from db_storage import BotStorage
 from llm_config import LLMSettings
@@ -733,7 +734,18 @@ def main():
         read_timeout=TELEGRAM_READ_TIMEOUT,
         write_timeout=TELEGRAM_WRITE_TIMEOUT,
     )
-    application = Application.builder().token(bot_token).request(request).build()
+    polling_monitor = PollingMonitor(
+        PollingSettings.from_env(),
+        os.getenv('ADMINS_CHAT_IDS', ''),
+        os.getenv('SEND_ERROR_TO_ADMIN', 'False').lower() == 'true',
+    )
+    bot = PollingAwareBot(
+        token=bot_token,
+        request=request,
+        get_updates_request=HTTPXRequest(connection_pool_size=1),
+        polling_observer=polling_monitor,
+    )
+    application = Application.builder().bot(bot).build()
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     # This handler will receive every error which happens in your bot
     application.add_error_handler(error_handler)
@@ -741,10 +753,15 @@ def main():
     # Start cleanup task after event loop is running
     async def post_init(app):  # pylint: disable=unused-argument
         global cleanup_task  # pylint: disable=global-statement
+        polling_monitor.start(app)
         cleanup_task = asyncio.create_task(cleanup_stale_users())
+
+    async def post_stop(app):  # pylint: disable=unused-argument
+        await polling_monitor.close()
 
     # Cancel cleanup task and close DB on shutdown
     async def post_shutdown(app):  # pylint: disable=unused-argument
+        await polling_monitor.close()
         if cleanup_task is not None:
             cleanup_task.cancel()
             try:
@@ -762,6 +779,7 @@ def main():
             error("Error closing database: %s", e)
 
     application.post_init = post_init
+    application.post_stop = post_stop
     application.post_shutdown = post_shutdown
 
     info("Bot started. Ctrl+C to stop")

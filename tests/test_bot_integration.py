@@ -154,16 +154,19 @@ import json
 from telegram.request import BaseRequest
 from telegram.ext import ApplicationBuilder
 created = []
+requests = []
 class OfflineRequest(BaseRequest):
     def __init__(self):
         self.stop_requested = False
+        self.closed = False
+        requests.append(self)
     @property
     def read_timeout(self):
         return 1
     async def initialize(self):
         pass
     async def shutdown(self):
-        pass
+        self.closed = True
     async def do_request(self, url, method, request_data=None, **kwargs):
         endpoint = url.rsplit('/', 1)[-1]
         if endpoint == 'getMe':
@@ -177,15 +180,16 @@ class OfflineRequest(BaseRequest):
         else:
             result = True
         return 200, json.dumps({'ok': True, 'result': result}).encode()
-builder = main.Application.builder().get_updates_request(OfflineRequest())
 original_build = ApplicationBuilder.build
 def build(self):
     app = original_build(self)
     created.append(app)
     return app
-with patch.object(main, 'HTTPXRequest', return_value=OfflineRequest()), patch.object(main.Application, 'builder', return_value=builder), patch.object(ApplicationBuilder, 'build', build):
+with patch.object(main, 'HTTPXRequest', side_effect=lambda **kwargs: OfflineRequest()) as request_factory, patch.object(ApplicationBuilder, 'build', build):
     main.main()
 assert len(created) == 1 and not created[0].running
+assert len(requests) == 2 and all(request.closed for request in requests)
+assert request_factory.call_args_list[1].kwargs == {'connection_pool_size': 1}
 assert main.cleanup_task.cancelled()
 print('Isolated bot integration and startup passed')
 '''
@@ -250,3 +254,116 @@ print('Isolated bot integration and startup passed')
                     else:
                         self.assertNotEqual(result.returncode, 0)
                         self.assertIn('ValueError', result.stderr)
+
+    def test_polling_settings_fallbacks_start_and_stop_without_llm(self):
+        root = Path(__file__).resolve().parents[1]
+        script = r'''
+import asyncio
+import os
+from unittest.mock import patch
+import httpx
+import main
+from telegram.ext import ApplicationBuilder
+from telegram.request import HTTPXRequest
+
+applications, monitors, requests, closed = [], [], [], []
+successful = asyncio.Event()
+original_build = ApplicationBuilder.build
+original_monitor = main.PollingMonitor
+def build(self):
+    app = original_build(self)
+    applications.append(app)
+    return app
+def monitor(*args, **kwargs):
+    instance = original_monitor(*args, **kwargs)
+    monitors.append(instance)
+    if os.getenv('PROBE_STARTUP_FAILURE'):
+        original_start = instance.start
+        def fail_after_start(app):
+            original_start(app)
+            raise RuntimeError('synthetic startup failure')
+        instance.start = fail_after_start
+    return instance
+async def handle(request):
+    if request.url.path.endswith('/getMe'):
+        result = {'id': 123, 'is_bot': True, 'first_name': 'Offline'}
+    elif request.url.path.endswith('/getUpdates'):
+        await asyncio.sleep(0)
+        successful.set()
+        result = []
+    else:
+        result = True
+    return httpx.Response(200, json={'ok': True, 'result': result})
+class Request(HTTPXRequest):
+    async def shutdown(self):
+        assert monitors[0].sender_task is None
+        if not os.getenv('PROBE_STARTUP_FAILURE'):
+            assert not monitors[0].started
+        await super().shutdown()
+        closed.append(self)
+def request(**kwargs):
+    instance = Request(**kwargs, httpx_kwargs={'transport': httpx.MockTransport(handle)})
+    requests.append(instance)
+    return instance
+async def lifecycle(app):
+    try:
+        await app.initialize()
+        await app.post_init(app)
+        await app.start()
+        await app.updater.start_polling()
+        await asyncio.wait_for(successful.wait(), 2)
+    finally:
+        if app.updater.running:
+            await app.updater.stop()
+        if app.running:
+            await app.stop()
+            await app.post_stop(app)
+        await app.shutdown()
+        await app.post_shutdown(app)
+with patch.object(main, 'HTTPXRequest', side_effect=request), patch.object(
+    main, 'PollingMonitor', side_effect=monitor
+), patch.object(ApplicationBuilder, 'build', build), patch.object(
+    main.Application, 'run_polling', lambda app: asyncio.run(lifecycle(app))
+):
+    try:
+        main.main()
+    except RuntimeError as exc:
+        assert os.getenv('PROBE_STARTUP_FAILURE') and str(exc) == 'synthetic startup failure'
+assert not main.USE_LLM
+assert len(requests) == 2 and len(closed) == 2
+assert not monitors[0].started and not monitors[0].recipients and monitors[0].application is None
+assert main.cleanup_task is None if os.getenv('PROBE_STARTUP_FAILURE') else main.cleanup_task.cancelled()
+print('LLM-off polling startup and lifecycle passed')
+'''
+        for enabled in ('true', 'false', 'PRIVATE_SENTINEL', 'startup-failure'):
+            with self.subTest(enabled=enabled), TemporaryDirectory() as temp:
+                env = {
+                    'PATH': os.environ.get('PATH', ''),
+                    'HOME': temp,
+                    'PYTHONPATH': str(root / 'src'),
+                    'PYTHON_DOTENV_DISABLED': '1',
+                    'BOT_TOKEN': '123:dummy',
+                    'USE_LLM': 'false',
+                    'POLLING_NETWORK_ALERTS_ENABLED': 'true' if enabled == 'startup-failure' else enabled,
+                    'POLLING_NETWORK_ALERT_GRACE_SEC': 'PRIVATE_SENTINEL',
+                }
+                if enabled == 'startup-failure':
+                    env['PROBE_STARTUP_FAILURE'] = '1'
+                result = subprocess.run(
+                    [sys.executable, '-c', script],
+                    cwd=temp,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('LLM-off polling startup and lifecycle passed', result.stdout)
+                self.assertNotIn('PRIVATE_SENTINEL', result.stdout + result.stderr)
+                if enabled in ('true', 'startup-failure'):
+                    self.assertIn('Invalid POLLING_NETWORK_ALERT_GRACE_SEC', result.stderr)
+                elif enabled == 'false':
+                    self.assertNotIn('Invalid POLLING_NETWORK', result.stderr)
+                else:
+                    self.assertIn('Invalid POLLING_NETWORK_ALERTS_ENABLED', result.stderr)

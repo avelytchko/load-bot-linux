@@ -108,6 +108,8 @@ Get a Telegram bot token from [@BotFather](https://t.me/botfather), then send `b
 **Optional - Error Reporting:**
 - `SEND_ERROR_TO_ADMIN` - Forward errors to admin (default: false)
 - `ADMINS_CHAT_IDS` - Comma-separated admin chat IDs
+- `POLLING_NETWORK_ALERTS_ENABLED` - Summarize eligible polling transport incidents after recovery (default: true)
+- `POLLING_NETWORK_ALERT_GRACE_SEC` - Minimum observed incident duration for a summary (default: 120 seconds)
 - `SEND_USER_INFO_WITH_HEALTHCHECK` - Send user info when bot_health command is triggered
 
 **Optional - AI/LLM (Grok or Gemini):**
@@ -130,6 +132,37 @@ Get a Telegram bot token from [@BotFather](https://t.me/botfather), then send `b
 - `USER_CLEANUP_INTERVAL_HOURS` - Cleanup interval (default: 24)
 
 </details>
+
+### Polling network incident summaries
+
+With `SEND_ERROR_TO_ADMIN=true` and `ADMINS_CHAT_IDS` configured, brief polling
+transport failures stay in logs without admin notifications. The first successful
+poll after an incident lasting at least `POLLING_NETWORK_ALERT_GRACE_SEC=120`
+queues a retrospective summary for each admin. No outage alerts or reminders are
+attempted while polling is unavailable. Duration includes timeout/retry delays;
+it is not an exact measurement of host or router downtime.
+Repeated separate incidents below the threshold remain log-only; there is no
+flapping or cumulative-duration alert.
+
+Summary delivery runs in the background with a 10-second limit per recipient.
+Temporary delivery failures retain a coalesced summary for that admin; later
+successful polls trigger retries no more often than once per 60 seconds (longer
+when Telegram requests it). A successful recipient is not sent the same summary
+again when another recipient's delivery fails. Blocked or invalid recipients stop
+receiving automatic summary attempts until restart. A send timeout can follow
+server acceptance, so exactly-once delivery cannot be guaranteed.
+
+Each eligible failure is logged safely: polling timeouts at WARNING, other
+transport failures at ERROR. Other errors retain their current handling, including
+immediate admin alerts for Telegram 5xx and non-polling failures. Admin summaries
+show compact error/cause types; full safe stack diagnostics remain in logs. This feature
+is not an independent uptime monitor and cannot alert through a disconnected host.
+Incidents and pending summaries are in memory and are lost on restart.
+
+Set `POLLING_NETWORK_ALERTS_ENABLED=false` to restore ordinary error handling.
+Invalid aggregation settings are logged and use safe fallbacks without stopping
+downloads: invalid enable flags disable aggregation; invalid enabled duration
+settings use 120 seconds. These settings work independently of `USE_LLM`.
 
 ### Grok web search
 

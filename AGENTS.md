@@ -49,6 +49,8 @@ command → LLM mention → supported-URL download.
 - `llm_text.py` — command parsing, localized LLM messages, citation rendering, UTF-16-safe splitting.
 - `llm_delivery.py` — `send_reply` (threaded, chunked, topic-safe plain text).
 - `safe_diagnostics.py` — `exception_summary`: loggable error metadata without raw exception text.
+- `polling_health.py` — observes real `get_updates` outcomes; short transport incidents stay in logs,
+  long ones yield bounded per-admin summaries after recovery. State is process-local.
 - `db_storage.py` — SQLite (`BotStorage`): per-user context/limits plus search quota, reservation and notice tables.
 - `permissions.py` — access control (`LIMIT_BOT_ACCESS`), supported-site list.
 - `cleanup.py`, `logger.py`, `general_error_handler.py` — temp-file cleanup, logging, error routing/admin alerts.
@@ -94,6 +96,10 @@ is sent → the temp directory is cleaned in `finally`. Updates are still handle
   (non-forum reply chains also carry a thread ID).
 - Log exceptions with `safe_diagnostics.exception_summary`, not `str(exc)` — SDK error text
   can echo prompts.
+- Polling transport suppression requires the explicit observer marker; `update=None` or
+  `NetworkError` alone does not prove polling origin (`BadRequest` also inherits it).
+  Keep both Telegram request objects injectable/offline in startup tests. Stop the owned
+  summary sender in `post_stop`, before request transports close.
 - Search quota state lives in its own tables; never add columns to `user_data` (its LLM save
   path upserts selected fields only, keep it that way).
 - Blocking work (subprocess, yt-dlp, ffmpeg) must not run directly on the event loop; use

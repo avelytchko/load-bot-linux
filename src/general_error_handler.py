@@ -16,6 +16,7 @@ from telegram import Update
 from telegram.ext import CallbackContext
 from logger import error, debug
 from safe_diagnostics import download_diagnostic_url, exception_summary
+from polling_health import observed_polling_error
 
 admins_chat_ids = os.getenv("ADMINS_CHAT_IDS")
 send_error_to_admin = os.getenv("SEND_ERROR_TO_ADMIN", "False").lower() == "true"
@@ -28,6 +29,8 @@ async def error_handler(update: Optional[Update], context: CallbackContext):
     Works only for Exceptions errors that are not handled by the bot code.
     """
 
+    if observed_polling_error(context.error):
+        return
     user = update.effective_user if isinstance(update, Update) else None
     user_id = user.id if user else None
     diagnostic = exception_summary(context.error)
