@@ -1,563 +1,296 @@
 # Video Downloader Bot
 
-![python-version](https://img.shields.io/badge/python-3.11_|_3.12_|_3.13_|_3.14-blue.svg)
-[![license](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Linters](https://github.com/ovchynnikov/load-bot-linux/actions/workflows/linets.yml/badge.svg)](https://github.com/ovchynnikov/load-bot-linux/actions/workflows/linets.yml)
-[![Publish Docker image](https://github.com/ovchynnikov/load-bot-linux/actions/workflows/github-actions-push-image.yml/badge.svg)](https://github.com/ovchynnikov/load-bot-linux/actions/workflows/github-actions-push-image.yml)
-[![Push to Remote](https://github.com/ovchynnikov/load-bot-linux/actions/workflows/github-action-push-to-remote.yml/badge.svg)](https://github.com/ovchynnikov/load-bot-linux/actions/workflows/github-action-push-to-remote.yml)
+Download videos into Telegram, with automatic compression and optional AI replies.
 
-A Telegram bot that downloads videos from 1000+ platforms (YouTube, Instagram, TikTok, Reddit, X, Facebook, etc.) with automatic compression and optional AI chat capabilities.
+**Python 3.14 · Docker · MIT**
 
-## Contents
+[Quick start](#quick-start) · [Usage](#usage) · [Configuration](#configuration) · [Other deployment options](#other-deployment-options) · [Development](#development)
 
-- [Quick Start](#quick-start)
-- [Features](#features)
-- [Setup](#setup)
-- [Usage](#usage)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
+Send a TikTok, Instagram, Reddit, X (`x.com`), Facebook or YouTube Shorts link. The bot
+downloads the media and replies in the same chat. Full YouTube videos and other
+yt-dlp-supported URLs can be requested with the `**` prefix.
 
-## Quick Start
+<a href="assets/readme/telegram-download.png"><img src="assets/readme/telegram-download.png" alt="Telegram conversation showing a YouTube URL followed by the video returned by the bot" width="480"></a>
 
-### Docker (recommended)
+*A real download: `**` enables full YouTube video URLs.*
 
-```bash
-# Create .env with your bot token
-echo "BOT_TOKEN=your_token_here" > .env
+## Quick start
 
-# Run
-docker run -d --name downloader-bot --restart always --env-file .env \
+Install Docker with Compose, then clone this repository:
+
+```shell
+git clone https://github.com/ovchynnikov/load-bot-linux.git
+cd load-bot-linux
+cp .env.example .env
+```
+
+Get a token from [@BotFather](https://t.me/botfather) and set `BOT_TOKEN` in `.env`.
+Set `SEND_ERROR_TO_ADMIN=false` for the first run; you can configure
+[admin alerts](#access-control-and-admin-alerts) later. Choose `LANGUAGE=en` or `LANGUAGE=uk`.
+
+```shell
+docker compose up -d --build
+```
+
+Check container status and recent logs:
+
+```shell
+docker compose ps
+docker compose logs --tail=50 bot
+```
+
+Look for `Application started`, then send `bot_health` in a private chat with the bot.
+For group use, [disable privacy mode](https://core.telegram.org/bots/features#privacy-mode)
+in @BotFather (`/setprivacy` → Disable), then remove and re-add the bot to the group.
+Making the bot a group admin also allows it to receive ordinary messages.
+
+> The sample configuration allows everyone to use the bot. Set up
+> [access control](#access-control-and-admin-alerts) before sharing it if needed.
+
+Compose keeps the database in the `bot-data` volume. Preserve it when updating
+the bot: it contains conversation history and search quotas.
+
+## Usage
+
+| Send to the bot | Result |
+| --- | --- |
+| A TikTok, Instagram, Reddit, X (`x.com`), Facebook or YouTube Shorts URL | Download the media |
+| `**` + a full YouTube URL | Request a full YouTube video |
+| `bot_health` | Check that the bot responds |
+| `ботяра, explain this` | AI reply, when chat is enabled |
+| `ботяра, web: latest space news` | Require Grok web search, when enabled |
+| `ботяра, image: a sunset over mountains` | Generate an image using a Grok API key |
+
+For a full YouTube video, send:
+
+```text
+**https://www.youtube.com/watch?v=VIDEO_ID
+```
+
+The bot enforces a **12-minute video limit** and tries to compress files larger
+than **50 MiB**. Files that remain too large are rejected. The `**` prefix also
+allows trying other [yt-dlp-supported sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md);
+availability depends on the site and any required login.
+With AI chat disabled, `ботяра, ...` returns a random canned reply.
+Unsupported URLs get a reply in private chats and are ignored in groups;
+use `x.com` instead of `twitter.com` links, or try the `**` prefix.
+
+## Configuration
+
+Use [`.env.example`](.env.example) as the configuration reference.
+Change `.env` and recreate the Compose service to apply settings:
+
+```shell
+docker compose up -d --force-recreate
+```
+
+| Setting | Purpose |
+| --- | --- |
+| `BOT_TOKEN` | Telegram bot token; required |
+| `LANGUAGE` | `en` or `uk`; the template selects `en`, the code default is `uk` |
+| `LOG_LEVEL` | Log verbosity; default `INFO` |
+| `H_CODEC` | CPU compression codec; default `libx265`, alternatively `libx264` |
+| `USE_LLM` | Enable AI chat; default `false` |
+| `USE_CONVERSATION_CONTEXT` | Include saved per-user chat context; default `true` |
+
+Inactive users' saved context is eligible for cleanup after `USER_CLEANUP_TTL_DAYS`
+(default 3 days), checked every `USER_CLEANUP_INTERVAL_HOURS` (default 24 hours).
+
+Keep `.env` values free of inline comments and surrounding quotes for compatibility
+with `docker run --env-file`. Never commit tokens or cookie files.
+
+### AI replies and web search
+
+For Grok chat, set:
+
+```ini
+USE_LLM=true
+LLM_PROVIDER=grok
+GROK_API_KEY=YOUR_XAI_KEY
+```
+
+The configured defaults are `GROK_MODEL=grok-4.3` and
+`GROK_REASONING_EFFORT=low`. For Gemini, use `LLM_PROVIDER=gemini` with
+`GEMINI_API_KEY` instead. Address the bot with `ботяра, ...` to request a reply.
+Image generation requires `GROK_API_KEY` and works independently of the chat
+provider and `USE_LLM`.
+
+To add web search to Grok chat:
+
+```ini
+GROK_WEB_SEARCH_ENABLED=true
+GROK_WEB_SEARCH_MODE=auto
+```
+
+In `auto` mode Grok decides when to search; `ботяра, web: ...` requires a search.
+Use `explicit` mode to offer search only for that command. No separate search key
+is needed. Replies include source links when available; failed-search fallback
+answers are labeled as unverified. Gemini does not use this search integration.
+
+> Search is paid. Default admission limits are 20 search-enabled requests per user
+> and 50 across the bot per UTC day. These are request limits, **not spending caps**;
+> one request can make multiple paid tool calls. Quotas and other limits are in
+> [`.env.example`](.env.example).
+
+Set `GROK_WEB_SEARCH_ENABLED=false` to stop admitting new searches; requests
+already running may finish. Chat has its own rate limits and bounded queue.
+
+### Access control and admin alerts
+
+To restrict access, set:
+
+```ini
+LIMIT_BOT_ACCESS=true
+ALLOWED_USERNAMES=username1,username2
+ALLOWED_CHAT_IDS=12345,-1001234567890
+```
+
+A matching username **or** chat ID grants access. Usernames omit `@`.
+To discover IDs, temporarily set `SEND_USER_INFO_WITH_HEALTHCHECK=true`, recreate
+the service, and send `bot_health` in each chat whose ID you need. For groups,
+first [configure privacy mode](#quick-start) or make the bot an admin. Do this before
+enabling access restrictions, or allow your username first. Use private-chat IDs
+for personal admin notifications and group IDs for group allowlists. Then fill
+the settings, turn healthcheck info off and recreate the service again.
+
+Admin error messages require `SEND_ERROR_TO_ADMIN=true` and `ADMINS_CHAT_IDS`.
+Brief polling transport failures stay in logs. Incidents lasting at least
+`POLLING_NETWORK_ALERT_GRACE_SEC` (default 120 seconds) get a summary after
+recovery; separate shorter incidents do not accumulate. Other errors retain
+their normal alerts. `POLLING_NETWORK_ALERTS_ENABLED=false` restores ordinary
+polling error handling.
+
+### Cookies and Intel GPU
+
+For Instagram or Reddit login, export a Netscape-format cookie file as
+`instagram_cookies.txt` or `reddit_cookies.txt`. Enable `INSTACOOKIES=true` or
+`REDDITCOOKIES=true`, and only then uncomment the matching mount in `docker-compose.yml`.
+Create the host file first: a missing file path can become a directory mount.
+Mounts must be writable because yt-dlp updates the cookie jar. Cookies are
+provided at runtime and are excluded from the image.
+
+Intel VAAPI compression requires `USE_GPU_COMPRESSING=true`, a compatible host
+GPU/driver, and container access to `/dev/dri`. Add under `services.bot` in Compose:
+
+```yaml
+devices: ["/dev/dri:/dev/dri"]
+group_add: [video]
+```
+
+For a Docker CLI deployment, add
+`--device /dev/dri:/dev/dri --group-add video` to the command below. Device
+permissions must match the host; availability depends on the hardware.
+
+## Other deployment options
+
+<details>
+<summary>Docker CLI</summary>
+
+With a configured `.env`, use the prebuilt Linux amd64 image:
+
+```shell
+docker run -d --name downloader-bot --restart unless-stopped --env-file .env \
   -v bot-data:/bot/data \
   ovchynnikov/load-bot-linux:latest
 ```
 
-### Systemd
+Alternatively, build this checkout with `docker build -t downloader-bot:local .`
+and use `downloader-bot:local` as the image in that command.
+Run only one deployment per bot token; stop an existing Compose service before
+switching to Docker CLI.
 
-```bash
-git clone https://github.com/ovchynnikov/load-bot-linux.git
-cd load-bot-linux
-pip install -r src/requirements.txt
-sudo apt install ffmpeg
-
-# Create service (see Deploy with Linux Service section below)
-```
-
-### Docker Compose
-
-```bash
-git clone https://github.com/ovchynnikov/load-bot-linux.git
-cd load-bot-linux
-cp .env.example .env  # then fill in BOT_TOKEN and other values
-docker compose up -d
-```
-
-Cookie files can be mounted by uncommenting the cookie lines in `docker-compose.yml`.
-
-Get a Telegram bot token from [@BotFather](https://t.me/botfather), then send `bot_health` to test.
-
-## Features
-
-- Downloads from 1000+ video platforms
-- Automatic compression to fit Telegram's 50 MB limit
-- GPU acceleration (Intel VAAPI)
-- Instagram Stories/Carousels with automatic fallback
-- Access control via allowlist (by username or chat ID)
-- Error reporting to admin chats
-- Multi-language support (Ukrainian, English)
-- Optional AI chat (Grok or Google Gemini)
-- Conversation context prompt history per user for AI
-
-## Setup
-
-### Prerequisites
-
-- Python 3.9+
-- FFmpeg
-- Linux OS
-
-### Get Bot Token
-
-1. Chat with [@BotFather](https://t.me/botfather) on Telegram
-2. Create a bot and copy the token
-3. Add to `.env` file
-
-### Environment Variables
-
-**Required:**
-- `BOT_TOKEN` - Your Telegram bot token
-
-<details>
-  <summary>Click to expand</summary>
-
-**Optional - Basic:**
-- `LANGUAGE` - `en` or `uk` (default: uk)
-- `LOG_LEVEL` - DEBUG, INFO, WARNING, ERROR (default: INFO)
-
-**Optional - Video Processing:**
-- `H_CODEC` - `libx265` (smaller) or `libx264` (default: libx265)
-- `USE_GPU_COMPRESSING` - Enable Intel VAAPI (default: false)
-- `INSTACOOKIES` - Use Instagram cookies file (default: false)
-- `REDDITCOOKIES` - Use Reddit cookies file `reddit_cookies.txt` (default: false)
-
-**Optional - Access Control:**
-- `LIMIT_BOT_ACCESS` - Restrict to allowlist (default: false)
-- `ALLOWED_USERNAMES` - Comma-separated usernames
-- `ALLOWED_CHAT_IDS` - Comma-separated chat IDs
-
-**Optional - Error Reporting:**
-- `SEND_ERROR_TO_ADMIN` - Forward errors to admin (default: false)
-- `ADMINS_CHAT_IDS` - Comma-separated admin chat IDs
-- `POLLING_NETWORK_ALERTS_ENABLED` - Summarize eligible polling transport incidents after recovery (default: true)
-- `POLLING_NETWORK_ALERT_GRACE_SEC` - Minimum observed incident duration for a summary (default: 120 seconds)
-- `SEND_USER_INFO_WITH_HEALTHCHECK` - Send user info when bot_health command is triggered
-
-Brief polling transport failures are logged without admin messages. With admin
-alerts enabled, incidents reaching the configured threshold (default: 120 seconds)
-are summarized after polling recovers. Separate shorter incidents do not accumulate.
-Set `POLLING_NETWORK_ALERTS_ENABLED=false` to restore ordinary error handling;
-other errors keep their existing alerts.
-
-**Optional - AI/LLM (Grok or Gemini):**
-- `USE_LLM` - Enable AI chat (default: false)
-- `LLM_PROVIDER` - `grok` or `gemini` (default: grok)
-- `GROK_API_KEY` - xAI API key (get from https://console.grok.ai)
-- `GROK_MODEL` - Text model (default: `grok-4.3`; previously `grok-4-latest`). Existing environment overrides take precedence.
-- `GROK_REASONING_EFFORT` - `none`, `low`, `medium`, or `high` (default: `low`)
-- `GEMINI_API_KEY` - Google API key (get from https://aistudio.google.com)
-- `LLM_RPM_LIMIT` - LLM Requests (prompts) per minute (default: 50)
-- `LLM_RPD_LIMIT` - LLM Requests per day (default: 500)
-- `GROK_IMG_MODEL` - default: grok-imagine-image
-- `IMG_GEN_RPM_LIMIT` - Image generations per minute (default: 1)
-- `IMG_GEN_RPD_LIMIT` - Image generations per day (default: 25)
-- `MAX_CONTEXT_MESSAGES` - LLM Messages (prompts) to remember per user (default: 3)
-- `MAX_CONTEXT_CHARS` - Max chars per message (default: 500)
-
-**Optional - Cleanup:**
-- `USER_CLEANUP_TTL_DAYS` - Remove LLM context messages (prompts) for inactive users after N days (default: 3)
-- `USER_CLEANUP_INTERVAL_HOURS` - Cleanup interval (default: 24)
+Add cookie mounts as needed, for example
+`-v "$PWD/instagram_cookies.txt:/bot/instagram_cookies.txt"`.
+Follow logs with `docker logs -f downloader-bot`.
 
 </details>
 
-### Grok web search
-
-Enable `USE_LLM=true`, `LLM_PROVIDER=grok`, and `GROK_WEB_SEARCH_ENABLED=true` with
-a valid `GROK_API_KEY`. The existing asynchronous OpenAI-compatible client uses
-xAI's Responses API. No separate search service or key is needed.
-
-With `GROK_WEB_SEARCH_MODE=auto` (default), Grok decides when to search. Use
-`ботяра, web: your question` to require search explicitly, or select `explicit`
-mode to offer search only for that prefix. Prompts and URLs keep their original
-case. Image commands, health checks, Reddit cookies, and downloads keep their
-existing routing. Explicit web requests with Gemini receive a labeled ordinary
-answer; they do not switch providers.
-
-Search admission defaults to **20 requests per user and 50 across the bot per UTC
-day** (`GROK_WEB_SEARCH_RPD_LIMIT`, `GROK_WEB_SEARCH_GLOBAL_RPD_LIMIT`). Reservations
-are durable, atomic, and released only after a completed response proves that no
-search ran. Failures and ambiguous timeouts retain them. Zero quota disables
-search admission. These are request quotas: a request/turn can make multiple paid
-tool calls. `GROK_WEB_SEARCH_MAX_TURNS=3` bounds hosted turns, not dollars.
-
-On a failed search, one tool-free fallback is attempted and clearly labeled as
-unverified. When quotas block auto mode, the first delivered reply per user/UTC
-day includes a notice; later auto replies that day are ordinary chat. Explicit
-`web:` requests remain labeled every time. Notices survive restarts. The bot
-rechecks quota availability on each request because no-search reservations can
-be released later.
-
-Relevant timeouts and bounds (all documented in `.env.example`):
-
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `GROK_REQUEST_TIMEOUT_SEC` | 120 | Overall provider work, excluding queue/delivery |
-| `GROK_SEARCH_TIMEOUT_SEC` | 75 | Search attempt budget |
-| `GROK_FALLBACK_TIMEOUT_SEC` | 30 | Reserved fallback budget; search + fallback must fit the overall budget |
-| `GROK_MAX_OUTPUT_TOKENS` | 4096 | Generation budget, including reasoning |
-| `LLM_MAX_CONCURRENT_REQUESTS` | 2 | Active LLM jobs |
-| `LLM_MAX_PENDING_REQUESTS` | 10 | Accepted jobs waiting for a user lock/active slot |
-| `LLM_MAX_JOBS_PER_USER` | 3 | Total accepted jobs per user, active plus pending |
-| `LLM_QUEUE_TIMEOUT_SEC` | 120 | Maximum admission wait |
-
-LLM jobs run in the background, in order per user, with best-effort typing while
-queued/generating/sending. Existing synchronous download processing can still
-delay the event loop. Replies include numbered source URLs when available, have
-previews disabled, and split safely into threaded plain-text messages. Conversation
-context remains per user across chats and keeps the configured truncation limits.
-Grok requests use `store=False`; this controls response storage, not every aspect
-of provider data retention. Usage logs include tool/token counts and reported cost
-ticks without adding raw LLM prompts or provider payloads. Error diagnostics include
-safe HTTP status/error codes, known Telegram failure reasons, retry delays and stack
-locations; arbitrary exception messages and frame locals are omitted. Optional LLM settings are validated only with `USE_LLM=true`;
-invalid enabled settings fail startup, while disabled LLM settings do not block downloads.
-
-Persist `/bot/data` in Dokku/Docker so deployments do not reset quotas or history.
-Back up SQLite before rollout. For an already configured Dokku bot, after deploying
-the new code, the non-secret search settings can be applied with:
-
-```bash
-dokku config:set YOUR_APP_NAME GROK_MODEL=grok-4.3 GROK_REASONING_EFFORT=low \
-  GROK_WEB_SEARCH_ENABLED=true GROK_WEB_SEARCH_MODE=auto \
-  GROK_WEB_SEARCH_RPD_LIMIT=20 GROK_WEB_SEARCH_GLOBAL_RPD_LIMIT=50
-```
-
-Set `GROK_WEB_SEARCH_ENABLED=false` to stop new search admission. In-flight work
-may still finish/be billed. This switch does not undo the Responses migration or
-background processing; retain the previous deployment for a full rollback.
-Confirm Dokku's actual stop grace period: a forced container stop can interrupt
-in-flight replies while their durable search reservations remain counted.
-
-### Development verification
-
-```bash
-black --check --diff --skip-string-normalization --line-length 120 src/ tests/
-(cd src && pylint --disable=R,C,W1203,W0105 . && PYTHONPATH="$PWD" pylint --disable=R,C,W1203,W0105 ../tests/)
-PYTHONPATH=src python -m unittest discover -s tests -v
-jq empty src/responses_*.json
-```
-
-Tests use fake provider/Telegram objects, temporary SQLite, and an isolated bot
-startup with dummy credentials. They require no real API keys, do not start production
-polling, or spend API credits. Rotating your Grok key does not affect this suite;
-no token file is needed in `tests/`. Recorded compatibility cases are stored in
-`tests/fixtures/grok-compatibility-results.json` and replayed without network calls.
-
-### Example .env
-
-```ini
-BOT_TOKEN=123456789:ABCDEFghijklmnopqrstuvwxyz
-LANGUAGE=en
-LIMIT_BOT_ACCESS=false
-ALLOWED_USERNAMES=
-ALLOWED_CHAT_IDS=
-H_CODEC=libx265
-USE_GPU_COMPRESSING=false
-INSTACOOKIES=false
-SEND_ERROR_TO_ADMIN=false
-ADMINS_CHAT_IDS=
-USE_LLM=false
-LLM_PROVIDER=grok
-```
-
-## Deploy with Docker
-
-### Basic
-
-```bash
-docker run -d --name downloader-bot --restart always --env-file .env \
-  -v bot-data:/bot/data \
-  ovchynnikov/load-bot-linux:latest
-```
-
-### With Instagram Cookies
-
-```bash
-docker run -d --name downloader-bot --restart always --env-file .env \
-  -v bot-data:/bot/data \
-  -v /path/to/instagram_cookies.txt:/bot/instagram_cookies.txt \
-  ovchynnikov/load-bot-linux:latest
-```
-
-Enable `INSTACOOKIES=true` in `.env`.
-
-Reddit works the same way: mount `reddit_cookies.txt` to `/bot/reddit_cookies.txt` and set `REDDITCOOKIES=true`.
-
-Cookie mounts must be writable (no `:ro`): yt-dlp saves the cookie jar back after each run.
-Cookie files are never copied into the image (see `.dockerignore`); always provide them at runtime.
-
-Keep `.env` free of inline comments (`KEY=value  # comment`): `docker run --env-file` treats
-everything after `=` as the value, including the comment.
-
-### With GPU (Intel)
-
-```bash
-docker run -d --name downloader-bot --restart always --env-file .env \
-  -v bot-data:/bot/data \
-  --device /dev/dri:/dev/dri \
-  --group-add video \
-  ovchynnikov/load-bot-linux:latest
-```
-
-Set `USE_GPU_COMPRESSING=true` in `.env`.
-
-### Build Custom Image
-
-```bash
-git clone https://github.com/ovchynnikov/load-bot-linux.git
-cd load-bot-linux
-docker build . -t downloader-bot:latest
-docker run -d --name downloader-bot --restart always --env-file .env \
-  -v bot-data:/bot/data \
-  downloader-bot:latest
-```
-
-## Deploy with Linux Service (Systemd)
-
 <details>
-  <summary>Click to expand</summary>
+<summary>Python and systemd</summary>
 
-### Install
+On Linux, install Python 3.14 and system FFmpeg (`ffmpeg` and `ffprobe` on `PATH`).
+From the repository root, with `.env` configured:
 
-```bash
-git clone https://github.com/ovchynnikov/load-bot-linux.git
-cd load-bot-linux
-pip install -r src/requirements.txt
-sudo apt install ffmpeg
-sudo chmod a+rx $(which yt-dlp)
+```shell
+python3.14 -m venv venv
+venv/bin/python -m pip install -r src/requirements.txt
+cd src
+../venv/bin/python main.py
 ```
 
-### Create Service
-
-```bash
-sudo nano /etc/systemd/system/downloader-bot.service
-```
+For systemd, adapt this unit to your checkout path and service account, then save
+it as `/etc/systemd/system/downloader-bot.service`:
 
 ```ini
 [Unit]
-Description=Video Downloader Bot Service
-After=network.target
+Description=Telegram Video Downloader
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-User=your_user
-WorkingDirectory=/path/to/bot
-ExecStart=/usr/bin/python3 /path/to/bot/main.py
-Restart=always
+User=YOUR_SERVICE_USER
+WorkingDirectory=/opt/load-bot-linux/src
+EnvironmentFile=/opt/load-bot-linux/.env
+ExecStart=/opt/load-bot-linux/venv/bin/python /opt/load-bot-linux/src/main.py
+Restart=on-failure
 RestartSec=5
-Environment="BOT_TOKEN=your_token_here"
-Environment="LANGUAGE=en"
-Environment="LOG_LEVEL=INFO"
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-### Start
+Stop the manual run before starting the service. Place optional cookie files in
+`src/`, the service's working directory, and make them writable by its account.
 
-```bash
+```shell
 sudo systemctl daemon-reload
-sudo systemctl enable downloader-bot.service
-sudo systemctl start downloader-bot.service
-sudo systemctl status downloader-bot.service
-```
-
-### View Logs
-
-```bash
+sudo systemctl enable --now downloader-bot.service
 journalctl -u downloader-bot.service -f
 ```
 
+Back up `src/data/` to preserve the native installation's database.
+
 </details>
-
-## Usage
-
-### Send a Video URL
-
-Simply send any supported platform URL:
-
-```
-https://youtube.com/shorts/video_id
-https://www.instagram.com/reel/ABC123/
-https://www.tiktok.com/@user/video/123456
-```
-
-### Download Full YouTube Video
-
-Prefix with `**`:
-
-```
-**https://www.youtube.com/watch?v=video_id
-```
-
-### Check Bot Status
-
-Send `bot_health` to the bot. It will respond with status.
-
-### AI Chat (if enabled)
-
-Send `ботяра, ` any message and the bot will respond using Grok or Gemini.
-
-### Generate Image (Grok only)
-
-```
-ботяра, image: a sunset over mountains
-```
-
-## Supported Platforms
-
-- Instagram (Reels, Stories, Carousels)
-- Facebook Reels
-- TikTok
-- YouTube (Shorts and full videos)
-- Reddit
-- X.com (Twitter)
-- 1000+ others via yt-dlp
-
-See the [full list](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md).
-
-## Instagram Stories and Carousels
-
-To download private/age-restricted content:
-
-1. Export cookies using a browser extension
-2. Save as `instagram_cookies.txt`
-3. Mount in Docker or place in working directory
-4. Set `INSTACOOKIES=true`
-
-The bot automatically falls back to gallery-dl if yt-dlp fails.
-
-## Reddit
-
-Reddit often requires a logged-in session to download videos. Without cookies such links fail and the bot
-replies that it couldn't download the media.
-
-1. Log in to Reddit in a browser and export cookies (Netscape format) using a browser extension
-2. Save as `reddit_cookies.txt`
-3. Mount in Docker (`/bot/reddit_cookies.txt`) or place in working directory
-4. Set `REDDITCOOKIES=true`
-
-## Access Control
-
-Restrict bot access to specific users or groups:
-
-```ini
-LIMIT_BOT_ACCESS=true
-ALLOWED_USERNAMES=username1,username2
-ALLOWED_CHAT_IDS=12345,67890
-```
-
-To get your IDs, send `bot_health` to the bot.
-
-## Error Reporting
-
-Forward errors to admin chats:
-
-```ini
-SEND_ERROR_TO_ADMIN=true
-ADMINS_CHAT_IDS=12345,67890
-```
-
-## AI/LLM Chat
-
-Optional integration with language models.
-
-### Setup Grok (xAI)
-
-1. Sign up at https://console.grok.ai
-2. Get API key
-3. Set in `.env`:
-   ```ini
-   USE_LLM=true
-   LLM_PROVIDER=grok
-   GROK_API_KEY=xai-your-key
-   ```
-
-### Setup Gemini (Google)
-
-1. Get API key at https://aistudio.google.com
-2. Set in `.env`:
-   ```ini
-   USE_LLM=true
-   LLM_PROVIDER=gemini
-   GEMINI_API_KEY=your-key
-   ```
-
-### Usage
-
-- Send a message: bot responds with AI
-- Image generation (Grok): `ботяра, image: prompt`
-- Bot remembers conversation history (configurable)
 
 ## Troubleshooting
 
-### Bot not responding
+Start with service status and recent logs:
 
-```bash
-# Check if running
-docker ps | grep downloader-bot
-
-# View logs
-docker logs downloader-bot
-
-# Systemd logs
-journalctl -u downloader-bot.service -n 50
+```shell
+docker compose ps
+docker compose logs --tail=100 bot
 ```
 
-Send `bot_health` to test.
+| Symptom | Check |
+| --- | --- |
+| No reply | Token, service logs, access allowlist; try `bot_health` in private chat |
+| Works privately, silent in a group | Disable privacy mode and re-add the bot, or make it a group admin |
+| YouTube URL ignored | Use a Shorts URL or add `**` before a full video URL |
+| Instagram or Reddit download fails | Login cookies, file mounts, expiration and available disk space |
+| AI does not reply | `USE_LLM`, selected provider's API key and the `ботяра, ...` prefix |
+| GPU compression fails | Intel driver support and access to `/dev/dri`; try CPU compression |
 
-### Video download fails
+For more detail, temporarily set `LOG_LEVEL=DEBUG` and recreate the service.
+Preserve the database when investigating storage errors; do not delete it as a
+routine troubleshooting step.
 
-- Check if platform is supported
-- For YouTube, use `**` prefix for full videos
-- Check available disk space
-- Enable debug logging: `LOG_LEVEL=DEBUG`
+## Development
 
-### Instagram downloads don't work
+Use the native Python environment above, then run the offline tests from the
+repository root:
 
-- Set up cookies file (see Instagram section)
-- Enable `INSTACOOKIES=true`
-- Ensure cookies are valid
-
-### Reddit downloads don't work
-
-- Set up cookies file (see Reddit section)
-- Enable `REDDITCOOKIES=true`
-
-### GPU not working
-
-Check if Intel GPU is present:
-
-```bash
-vainfo
+```shell
+PYTHONPATH=src venv/bin/python -m unittest discover -s tests -v
 ```
 
-If not found, install drivers:
+Tests use dummy credentials and offline transports; no real API keys are needed.
+See [AGENTS.md](AGENTS.md) for the exact Black, Pylint and JSON checks used for
+verification. Keep both English and Ukrainian responses in sync when contributing.
 
-```bash
-sudo apt install intel-media-va-driver-non-free
-```
+## License and credits
 
-### Database locked
-
-```bash
-docker restart downloader-bot
-```
-
-Or clear database (WARNING: loses user data):
-
-```bash
-docker exec downloader-bot rm /bot/data/bot.db
-docker restart downloader-bot
-```
-
-## Contributing
-
-Contributions welcome. Please:
-
-1. Check existing issues
-2. Open an issue or fork and submit a PR
-3. Follow code style (black, type hints)
-
-To set up development:
-
-```bash
-git clone https://github.com/yourusername/load-bot-linux.git
-cd load-bot-linux
-python3 -m venv venv
-source venv/bin/activate
-pip install -r src/requirements.txt
-```
-
-## License
-
-MIT License - see [LICENSE](LICENSE) file.
-
-## Credits
-
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - Video downloader
-- [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) - Telegram API
-- [gallery-dl](https://github.com/mikf/gallery-dl) - Media gallery downloader
-- [FFmpeg](https://ffmpeg.org) - Video processing
-
----
-
-Backend code uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) which is released under The [Unlicense](https://unlicense.org/). All rights for yt-dlp belong to their respective authors.
+[MIT license](LICENSE). Originally created by Ovchynnikov.
+Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp),
+[gallery-dl](https://github.com/mikf/gallery-dl),
+[python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot)
+and [FFmpeg](https://ffmpeg.org).
