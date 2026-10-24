@@ -10,13 +10,34 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from openai import BadRequestError, AuthenticationError
 from telegram import Update
-from telegram.error import BadRequest as TelegramBadRequest, ChatMigrated, Forbidden, NetworkError, RetryAfter
+from telegram.error import BadRequest as TelegramBadRequest, ChatMigrated, Conflict, Forbidden, NetworkError, RetryAfter
 
 import general_error_handler
-from safe_diagnostics import download_diagnostic_url, exception_summary
+from safe_diagnostics import download_diagnostic_url, exception_summary, telegram_conflict_reason
 
 
 class DiagnosticTests(unittest.TestCase):
+    def test_conflict_reasons_match_complete_descriptions_only(self):
+        for description, reason in (
+            (
+                'Conflict: terminated by other getUpdates request; make sure that only one bot instance is running',
+                'polling_conflict',
+            ),
+            (
+                "Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first",
+                'webhook_active',
+            ),
+            ('Conflict: terminated by setWebhook request', 'webhook_changed'),
+        ):
+            for text in (description, description.upper(), description.removeprefix('Conflict: ')):
+                self.assertEqual(telegram_conflict_reason(Conflict(text)), reason)
+                self.assertIn(f'telegram_error={reason}', exception_summary(Conflict(text)))
+            for exception in (Conflict(description + ' PRIVATE_SENTINEL'), TelegramBadRequest(description)):
+                self.assertIsNone(telegram_conflict_reason(exception))
+                self.assertNotIn('telegram_error=', exception_summary(exception))
+                self.assertNotIn('PRIVATE_SENTINEL', exception_summary(exception))
+        self.assertIsNone(telegram_conflict_reason(Conflict('PRIVATE_SENTINEL')))
+
     def test_telegram_reasons_are_actionable_without_arbitrary_descriptions(self):
         for exception, reason in (
             (TelegramBadRequest('Message thread not found'), 'message_thread_not_found'),

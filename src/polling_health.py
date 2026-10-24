@@ -1,4 +1,4 @@
-"""Observe polling transport incidents and deliver bounded, retrospective admin summaries."""
+"""Observe polling outages, quiet isolated conflicts and bound administrator notifications."""
 
 import asyncio
 from contextlib import suppress
@@ -14,12 +14,15 @@ from telegram.ext import ExtBot
 
 from i18n import get_language
 from logger import error, info, warning
-from safe_diagnostics import exception_summary, telegram_details
+from safe_diagnostics import exception_summary, telegram_conflict_reason, telegram_details
 
 SUMMARY_RETRY_SEC = 60
 SUMMARY_SEND_TIMEOUT_SEC = 10
+POLLING_CONFLICT_REPEAT_WINDOW_SEC = 120
+POLLING_CONFLICT_ALERT_INTERVAL_SEC = 1800
 _OBSERVED = object()
 _MARKER = '_polling_health_observed'
+_CONFLICT_MARKER = '_polling_conflict_admission'
 
 
 @dataclass(frozen=True)
@@ -82,10 +85,29 @@ def observed_polling_error(exception):
     return getattr(exception, _MARKER, None) is _OBSERVED
 
 
+@dataclass(frozen=True)
+class _ConflictAdmission:
+    monitor: 'PollingMonitor'
+    generation: object
+
+    def claim(self, admin_id):
+        """Reserve one actual recipient attempt before the generic handler awaits I/O."""
+        return self.monitor.claim_conflict_attempt(admin_id, self.generation)
+
+
+def polling_conflict_admission(exception):
+    """Only the polling observer can attach a typed, already-logged admission token."""
+    admission = getattr(exception, _CONFLICT_MARKER, None)
+    return admission if isinstance(admission, _ConflictAdmission) else None
+
+
 def compact_diagnostic(exception):
     """Admin summaries need type/cause names; full safe frame evidence stays in logs."""
     cause = exception.__cause__ or (None if exception.__suppress_context__ else exception.__context__)
     name = type(exception).__name__
+    reason = telegram_conflict_reason(exception)
+    if reason:
+        name += f'({reason})'
     return f'{name} ← {type(cause).__name__}' if cause is not None else name
 
 
@@ -108,16 +130,21 @@ class PollingAwareBot(ExtBot):
             except Exception as observer_error:  # pylint: disable=broad-exception-caught
                 if observed_polling_error(exc):
                     delattr(exc, _MARKER)
-                error(
-                    'Polling observer failed %s original=%s',
-                    exception_summary(observer_error),
-                    exception_summary(exc),
-                )
+                if polling_conflict_admission(exc) is not None:
+                    delattr(exc, _CONFLICT_MARKER)
+                # Even broken diagnostic logging must preserve the original polling outcome.
+                with suppress(Exception):
+                    error(
+                        'Polling observer failed %s original=%s',
+                        exception_summary(observer_error),
+                        exception_summary(exc),
+                    )
             raise
         try:
             self._polling_observer.observe_success()
         except Exception as observer_error:  # pylint: disable=broad-exception-caught
-            error('Polling observer failed %s', exception_summary(observer_error))
+            with suppress(Exception):
+                error('Polling observer failed %s', exception_summary(observer_error))
         return result
 
 
@@ -173,9 +200,13 @@ class Recipient:
     pending: IncidentSummary | None = None
     next_attempt: float = 0
     disabled: bool = False
+    next_conflict_attempt: float | None = None
 
     def add(self, summary):
         self.pending = self.pending.merge(summary) if self.pending else summary
+
+    def conflict_due(self, now):
+        return self.next_conflict_attempt is None or now >= self.next_conflict_attempt
 
 
 def summary_text(summary, language):
@@ -210,10 +241,16 @@ class PollingMonitor:
         self.application = None
         self.started = False
         self.sender_task = None
+        self.last_conflict_at = None
+        self.conflict_generation = object()
 
     def start(self, application):
         self.application = application
         self.started = True
+        self.conflict_generation = object()
+        self.last_conflict_at = None
+        for recipient in self.recipients.values():
+            recipient.next_conflict_attempt = None
 
     def is_active(self):
         return bool(
@@ -225,7 +262,11 @@ class PollingMonitor:
         )
 
     def observe_failure(self, exception):
-        if not self.is_active() or not is_transport_failure(exception):
+        if not self.is_active():
+            return False
+        if telegram_conflict_reason(exception) == 'polling_conflict':
+            return self._observe_conflict(exception)
+        if not is_transport_failure(exception):
             return False
         diagnostic = exception_summary(exception)
         now = self.clock()
@@ -234,6 +275,34 @@ class PollingMonitor:
         if self.incidents.active is None:
             info('Polling incident started operation=get_updates')
         self.incidents.fail(now, compact_diagnostic(exception))
+        return True
+
+    def _observe_conflict(self, exception):
+        now = self.clock()
+        repeated = (
+            self.last_conflict_at is not None and 0 <= now - self.last_conflict_at <= POLLING_CONFLICT_REPEAT_WINDOW_SEC
+        )
+        log = error if repeated else warning
+        log('Polling conflict operation=get_updates repeated=%s %s', repeated, exception_summary(exception))
+        self.last_conflict_at = now
+        if (
+            repeated
+            and self.notifications
+            and any(not recipient.disabled and recipient.conflict_due(now) for recipient in self.recipients.values())
+        ):
+            setattr(exception, _CONFLICT_MARKER, _ConflictAdmission(self, self.conflict_generation))
+            return False
+        return True
+
+    def claim_conflict_attempt(self, admin_id, generation):
+        """Enforce actual per-admin timing even for slow/overlapping callback waves."""
+        if generation is not self.conflict_generation or not self.is_active() or not self.notifications:
+            return False
+        recipient = self.recipients.get(admin_id)
+        now = self.clock()
+        if recipient is None or recipient.disabled or not recipient.conflict_due(now):
+            return False
+        recipient.next_conflict_attempt = now + POLLING_CONFLICT_ALERT_INTERVAL_SEC
         return True
 
     def observe_success(self):
@@ -330,3 +399,5 @@ class PollingMonitor:
         self.recipients.clear()
         self.incidents.active = None
         self.application = None
+        self.last_conflict_at = None
+        self.conflict_generation = object()

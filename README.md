@@ -160,6 +160,7 @@ Save the IDs, turn healthcheck info off and recreate the service again.
 Admin alerts require `SEND_ERROR_TO_ADMIN=true` and `ADMINS_CHAT_IDS`.
 Brief polling network failures stay in logs; incidents lasting at least 120 seconds
 (default) are summarized after recovery. Separate shorter incidents do not accumulate.
+An isolated polling conflict is logged only; repeats within 120 seconds alert each admin at most every 30 minutes.
 See [`.env.example`](.env.example) for alert settings.
 
 ### Cookies and Intel GPU

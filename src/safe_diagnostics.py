@@ -7,7 +7,7 @@ import re
 import traceback
 from urllib.parse import urlsplit, urlunsplit
 
-from telegram.error import BadRequest, ChatMigrated, Forbidden, RetryAfter
+from telegram.error import BadRequest, ChatMigrated, Conflict, Forbidden, RetryAfter
 
 PROVIDER_CODES = {
     "invalid_api_key",
@@ -46,6 +46,11 @@ TELEGRAM_REASONS = {
     "chat not found": "chat_not_found",
     "message is too long": "message_too_long",
 }
+TELEGRAM_CONFLICT_REASONS = {
+    "terminated by other getupdates request; make sure that only one bot instance is running": "polling_conflict",
+    "can't use getupdates method while webhook is active; use deletewebhook to delete the webhook first": "webhook_active",
+    "terminated by setwebhook request": "webhook_changed",
+}
 DOWNLOAD_HOSTS = {
     "facebook.com",
     "fb.watch",
@@ -60,6 +65,13 @@ DOWNLOAD_HOSTS = {
 }
 
 
+def telegram_conflict_reason(exception):
+    """Recognize complete fixed Bot API descriptions without returning arbitrary input."""
+    if not isinstance(exception, Conflict):
+        return None
+    return TELEGRAM_CONFLICT_REASONS.get(exception.message.casefold().removeprefix("conflict: "))
+
+
 def telegram_details(exception):
     """Use fixed reason labels and numeric fields, never an arbitrary description.
 
@@ -69,6 +81,9 @@ def telegram_details(exception):
     if isinstance(exception, (BadRequest, Forbidden)):
         message = exception.message.casefold().removeprefix("forbidden: ")
         reason = TELEGRAM_REASONS.get(message)
+        return [f"telegram_error={reason}"] if reason else []
+    if isinstance(exception, Conflict):
+        reason = telegram_conflict_reason(exception)
         return [f"telegram_error={reason}"] if reason else []
     if isinstance(exception, RetryAfter):
         delay = exception.retry_after
