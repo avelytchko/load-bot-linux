@@ -68,6 +68,8 @@ is sent → the temp directory is cleaned in `finally`. Updates are still handle
 
 ## Conventions
 
+- Keep README focused on setup, usage and essential configuration. Describe minor features briefly
+  in existing sections; keep implementation details and review history in plans or code comments.
 - Formatting is enforced: black, line length **120**, string quotes left as-is
   (`--skip-string-normalization`). Don't reformat quotes or wrap at 88.
 - Pylint runs with `R,C,W1203,W0105` disabled — don't "fix" lazy-logging (`%s`) into f-strings.
