@@ -144,41 +144,38 @@ ALLOWED_USERNAMES=username1,username2
 ALLOWED_CHAT_IDS=12345,-1001234567890
 ```
 
-A matching username **or** chat ID grants access. Usernames omit `@`.
-To discover IDs, temporarily set `SEND_USER_INFO_WITH_HEALTHCHECK=true`, recreate
-the service, and send `bot_health` in each chat whose ID you need. For groups,
-first [configure privacy mode](#quick-start) or make the bot an admin. Do this before
-enabling access restrictions, or allow your username first. Use private-chat IDs
-for personal admin notifications and group IDs for group allowlists. Then fill
-the settings, turn healthcheck info off and recreate the service again.
+A matching username **or** chat ID grants access. Omit `@` in usernames.
 
-Admin error messages require `SEND_ERROR_TO_ADMIN=true` and `ADMINS_CHAT_IDS`.
-Brief polling transport failures stay in logs. Incidents lasting at least
-`POLLING_NETWORK_ALERT_GRACE_SEC` (default 120 seconds) get a summary after
-recovery; separate shorter incidents do not accumulate. Other errors retain
-their normal alerts. `POLLING_NETWORK_ALERTS_ENABLED=false` restores ordinary
-polling error handling.
+<details>
+<summary>Finding chat IDs</summary>
+
+Temporarily set `SEND_USER_INFO_WITH_HEALTHCHECK=true`, recreate the service and
+send `bot_health` in each target chat. For groups, [configure privacy mode](#quick-start)
+or make the bot an admin. Do this before restricting access, or allow your username
+first. Use private-chat IDs for personal admin alerts and group IDs for allowlists.
+Save the IDs, turn healthcheck info off and recreate the service again.
+
+</details>
+
+Admin alerts require `SEND_ERROR_TO_ADMIN=true` and `ADMINS_CHAT_IDS`.
+Brief polling network failures stay in logs; incidents lasting at least 120 seconds
+(default) are summarized after recovery. Separate shorter incidents do not accumulate.
+See [`.env.example`](.env.example) for alert settings.
 
 ### Cookies and Intel GPU
 
-For Instagram or Reddit login, export a Netscape-format cookie file as
-`instagram_cookies.txt` or `reddit_cookies.txt`. Enable `INSTACOOKIES=true` or
-`REDDITCOOKIES=true`, and only then uncomment the matching mount in `docker-compose.yml`.
-Create the host file first: a missing file path can become a directory mount.
-Mounts must be writable because yt-dlp updates the cookie jar. Cookies are
-provided at runtime and are excluded from the image.
+Export Netscape-format cookies as `instagram_cookies.txt` or `reddit_cookies.txt`.
+Set `INSTACOOKIES=true` or `REDDITCOOKIES=true`, then uncomment the matching mount
+in `docker-compose.yml`. Create the host file **before mounting** and keep the mount
+**writable**: yt-dlp updates the cookie jar.
 
-Intel VAAPI compression requires `USE_GPU_COMPRESSING=true`, a compatible host
-GPU/driver, and container access to `/dev/dri`. Add under `services.bot` in Compose:
+For Intel VAAPI, set `USE_GPU_COMPRESSING=true`. The host needs a compatible GPU/driver
+and device permissions. Add under `services.bot` in Compose:
 
 ```yaml
 devices: ["/dev/dri:/dev/dri"]
 group_add: [video]
 ```
-
-For a Docker CLI deployment, add
-`--device /dev/dri:/dev/dri --group-add video` to the command below. Device
-permissions must match the host; availability depends on the hardware.
 
 ## Other deployment options
 
@@ -200,6 +197,8 @@ switching to Docker CLI.
 
 Add cookie mounts as needed, for example
 `-v "$PWD/instagram_cookies.txt:/bot/instagram_cookies.txt"`.
+For Intel VAAPI, add `--device /dev/dri:/dev/dri --group-add video` and set
+`USE_GPU_COMPRESSING=true`.
 Follow logs with `docker logs -f downloader-bot`.
 
 </details>
