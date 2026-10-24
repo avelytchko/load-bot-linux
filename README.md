@@ -1,8 +1,9 @@
 # Video Downloader Bot
 
-Download videos into Telegram, with automatic compression and optional AI replies.
+![python-version](https://img.shields.io/badge/python-3.14-blue.svg)
+[![license](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Python 3.14 · Docker · MIT**
+Download videos into Telegram, with automatic compression and optional AI replies.
 
 [Quick start](#quick-start) · [Usage](#usage) · [Configuration](#configuration) · [Other deployment options](#other-deployment-options) · [Development](#development)
 
@@ -11,8 +12,6 @@ downloads the media and replies in the same chat. Full YouTube videos and other
 yt-dlp-supported URLs can be requested with the `**` prefix.
 
 <a href="assets/readme/telegram-download.png"><img src="assets/readme/telegram-download.png" alt="Telegram conversation showing a YouTube URL followed by the video returned by the bot" width="480"></a>
-
-*A real download: `**` enables full YouTube video URLs.*
 
 ## Quick start
 
